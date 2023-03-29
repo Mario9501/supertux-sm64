@@ -77,7 +77,7 @@ TitleScreen::make_tux_jump()
 
   if (tux.is_mario())
   {
-    sm64_mario_set_health(tux.m_mario_obj->ID(), MARIO_FULL_HEALTH);
+    sm64_mario_heal(tux.m_mario_obj->ID(), 1);
 
     if (!(tux.m_mario_obj->state.action & ACT_FLAG_AIR))
     {
@@ -113,13 +113,14 @@ void
 TitleScreen::setup()
 {
   Sector& sector = m_titlesession->get_current_sector();
-  Player& tux = sector.get_player();
-  if (tux.is_mario()) tux.set_bonus(NO_BONUS, false);
 
   if (Sector::current() != &sector) {
     auto& music = sector.get_singleton_by_type<MusicObject>();
     music.play_music(LEVEL_MUSIC);
-    sector.activate(sector.get_player().get_pos());
+    if (sector.get_player().is_mario())
+      sector.activate(sector.get_player().get_pos() + Vector(0, -32));
+    else
+      sector.activate(sector.get_player().get_pos());
   }
 
   MenuManager::instance().set_menu(MenuStorage::MAIN_MENU);
@@ -133,7 +134,11 @@ TitleScreen::leave()
   sector.deactivate();
 
   if (sector.get_player().is_mario())
-	  sector.get_player().m_mario_obj->delete_blocks();
+  {
+    sector.get_player().m_mario_obj->delete_blocks();
+    sector.get_player().m_mario_obj->delete_all_movingobjects();
+    sector.get_player().m_mario_obj->delete_all_path_blocks();
+  }
 
   MenuManager::instance().clear_menu_stack();
 }

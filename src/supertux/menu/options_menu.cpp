@@ -17,6 +17,10 @@
 
 #include "supertux/menu/options_menu.hpp"
 
+extern "C" {
+#include <libsm64.h>
+}
+
 #include "audio/sound_manager.hpp"
 #include "gui/dialog.hpp"
 #include "gui/item_goto.hpp"
@@ -75,7 +79,8 @@ enum OptionsMenuIDs {
   MNID_CONFIRMATION_DIALOG,
   MNID_PAUSE_ON_FOCUSLOSS,
   MNID_CUSTOM_CURSOR,
-  MNID_MARIO
+  MNID_MARIO,
+  MNID_HUD,
 #ifdef ENABLE_TOUCHSCREEN_SUPPORT
   , MNID_MOBILE_CONTROLS
 #endif
@@ -440,6 +445,8 @@ OptionsMenu::OptionsMenu(bool complete) :
   if (MarioManager::current()->Loaded())
     add_toggle(MNID_MARIO, "Mario", &g_config->mario).set_help("Play as Mario from SM64 instead of Tux");
 
+  add_toggle(MNID_HUD, "Show HUD", &g_config->show_hud).set_help("Display HUD in-game");
+
   add_submenu(_("Integrations and presence"), MenuStorage::INTEGRATIONS_MENU)
       .set_help(_("Manage whether SuperTux should display the levels you play on your social media profiles (Discord)"));
 
@@ -607,6 +614,7 @@ OptionsMenu::menu_action(MenuItem& item)
         bool sound_enabled = g_config->sound_volume > 0 ? true : false;
         SoundManager::current()->enable_sound(sound_enabled);
         SoundManager::current()->set_sound_volume(g_config->sound_volume);
+        sm64_set_sound_volume(g_config->sound_volume / 100.f);
         g_config->save();
       }
       break;

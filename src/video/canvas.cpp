@@ -103,6 +103,10 @@ Canvas::render(Renderer& renderer, Filter filter)
       case MARIO:
         painter.draw_mario(static_cast<const MarioRequest&>(request));
         break;
+
+      case SM64TEXTURE:
+        painter.draw_sm64_texture(static_cast<const SM64TextureRequest&>(request));
+        break;
     }
   }
 }
@@ -379,7 +383,7 @@ Canvas::get_pixel(const Vector& position, const std::shared_ptr<Color>& color_ou
 }
 
 void
-Canvas::draw_mario(SM64MarioGeometryBuffers* geometry, MarioMesh* mesh, Vector& pos, Vector& camera, uint32_t cap, uint32_t texture, uint32_t shader, uint16_t* indices)
+Canvas::draw_mario(SM64MarioGeometryBuffers* geometry, Vector& pos, Vector& camera, uint32_t cap, uint32_t texture, uint16_t* indices)
 {
   auto request = new(m_obst) MarioRequest();
 
@@ -388,13 +392,30 @@ Canvas::draw_mario(SM64MarioGeometryBuffers* geometry, MarioMesh* mesh, Vector& 
   request->alpha = m_context.transform().alpha;
 
   request->geometry = geometry;
-  request->mesh = mesh;
   request->pos = pos;
   request->camera = camera;
   request->cap = cap;
   request->texture = texture;
-  request->shader = shader;
   request->indices = indices;
+
+  m_requests.push_back(request);
+}
+
+void
+Canvas::draw_sm64_texture(uint32_t texture, const Vector& pos, const Vector& size, const Vector& texCoord1, const Vector& texCoord2, const Color& color, int layer)
+{
+  auto request = new(m_obst) SM64TextureRequest();
+
+  request->layer = layer;
+  request->flip = m_context.transform().flip;
+  request->alpha = m_context.transform().alpha;
+
+  request->texture = texture;
+  request->pos = pos;
+  request->size = size;
+  request->texCoord1 = texCoord1;
+  request->texCoord2 = texCoord2;
+  request->color = color;
 
   m_requests.push_back(request);
 }

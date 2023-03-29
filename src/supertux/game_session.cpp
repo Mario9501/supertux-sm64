@@ -18,6 +18,10 @@
 
 #include <cfloat>
 
+extern "C" {
+#include <libsm64.h>
+}
+
 #include "audio/sound_manager.hpp"
 #include "control/input_manager.hpp"
 #include "editor/editor.hpp"
@@ -101,6 +105,18 @@ GameSession::reset_level()
 int
 GameSession::restart_level(bool after_death)
 {
+  // hacky solution for mario to delete all blocks and movingobjects from mario instance
+  if (m_currentsector) {
+    Player& tux = m_currentsector->get_player();
+    if (tux.is_mario() && tux.m_mario_obj) {
+      delete tux.m_mario_obj;
+      tux.m_mario_obj = nullptr;
+    }
+  }
+
+  if (sm64_get_current_background_music() != UINT16_MAX)
+    sm64_stop_background_music(sm64_get_current_background_music());
+
   const PlayerStatus& currentStatus = m_savegame.get_player_status();
   m_coins_at_start = currentStatus.coins;
   m_bonus_at_start = currentStatus.bonus;
@@ -226,6 +242,9 @@ GameSession::abort_level()
   currentStatus.max_fire_bullets = m_max_fire_bullets_at_start;
   currentStatus.max_ice_bullets = m_max_ice_bullets_at_start;
   SoundManager::current()->stop_sounds();
+
+  if (sm64_get_current_background_music() != UINT16_MAX)
+    sm64_stop_background_music(sm64_get_current_background_music());
 }
 
 bool
@@ -377,6 +396,15 @@ GameSession::update(float dt_sec, const Controller& controller)
 
   // respawning in new sector?
   if (!m_newsector.empty() && !m_newspawnpoint.empty()) {
+    SM64MarioState oldState;
+    memset(&oldState, 0, sizeof(SM64MarioState));
+    if (m_currentsector->get_player().is_mario()) {
+      oldState = m_currentsector->get_player().m_mario_obj->state;
+      m_currentsector->get_player().m_mario_obj->delete_blocks();
+      m_currentsector->get_player().m_mario_obj->delete_all_movingobjects();
+      m_currentsector->get_player().m_mario_obj->delete_all_path_blocks();
+    }
+
     auto sector = m_level->get_sector(m_newsector);
     if (sector == nullptr) {
       log_warning << "Sector '" << m_newsector << "' not found" << std::endl;
@@ -388,6 +416,19 @@ GameSession::update(float dt_sec, const Controller& controller)
     sector->get_singleton_by_type<MusicObject>().play_music(LEVEL_MUSIC);
     m_currentsector = sector;
     m_currentsector->play_looping_sounds();
+
+    if (m_currentsector->get_player().is_mario()) {
+      float yVel = (oldState.velocity[1] > 0) ? 200 : oldState.velocity[1];
+      MarioInstance* mario = m_currentsector->get_player().m_mario_obj;
+
+      mario->state = oldState;
+      mario->input.buttonA = (oldState.velocity[1] > 0);
+
+      sm64_set_mario_action(mario->ID(), oldState.action);
+      sm64_set_mario_velocity(mario->ID(), oldState.velocity[0], yVel, oldState.velocity[2]);
+      sm64_set_mario_faceangle(mario->ID(), oldState.faceAngle);
+      sm64_set_mario_health(mario->ID(), oldState.health);
+    }
 
     if (is_playing_demo())
     {
@@ -432,13 +473,18 @@ GameSession::update(float dt_sec, const Controller& controller)
     return;
 
   if (m_currentsector->get_player().m_invincible_timer.started()) {
-    if (m_currentsector->get_player().m_invincible_timer.get_timeleft() <=
-       TUX_INVINCIBLE_TIME_WARNING) {
-      m_currentsector->get_singleton_by_type<MusicObject>().play_music(HERRING_WARNING_MUSIC);
-    } else {
-      m_currentsector->get_singleton_by_type<MusicObject>().play_music(HERRING_MUSIC);
+    if (!m_currentsector->get_player().is_mario()) {
+      if (m_currentsector->get_player().m_invincible_timer.get_timeleft() <=
+         TUX_INVINCIBLE_TIME_WARNING) {
+        m_currentsector->get_singleton_by_type<MusicObject>().play_music(HERRING_WARNING_MUSIC);
+      } else {
+        m_currentsector->get_singleton_by_type<MusicObject>().play_music(HERRING_MUSIC);
+      }
     }
   } else if (m_currentsector->get_singleton_by_type<MusicObject>().get_music_type() != LEVEL_MUSIC) {
+    if (m_currentsector->get_player().is_mario() && sm64_get_current_background_music() != UINT16_MAX) {
+      sm64_stop_background_music(sm64_get_current_background_music());
+    }
     m_currentsector->get_singleton_by_type<MusicObject>().play_music(LEVEL_MUSIC);
   }
   if (reset_button) {
@@ -474,6 +520,9 @@ GameSession::finish(bool win)
   if (m_end_seq_started)
     return;
   m_end_seq_started = true;
+
+  if (sm64_get_current_background_music() != UINT16_MAX)
+    sm64_stop_background_music(sm64_get_current_background_music());
 
   using namespace worldmap;
 
@@ -595,6 +644,9 @@ GameSession::start_sequence(Sequence seq, const SequenceData* data)
 
   m_end_sequence = static_cast<EndSequence*>(&m_currentsector->add_object(std::move(end_sequence)));
   m_end_sequence->start();
+
+  if (sm64_get_current_background_music() != UINT16_MAX)
+    sm64_stop_background_music(sm64_get_current_background_music());
 
   SoundManager::current()->play_music("music/misc/leveldone.ogg", false);
   m_currentsector->get_player().set_winning();

@@ -58,8 +58,15 @@ include(CheckCXXCompilerFlag)
 ## For autopackage
 set(APPDATADIR "${CMAKE_INSTALL_PREFIX}/share/games/supertux2")
 
-set(BUILD_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data")
-set(BUILD_CONFIG_DATA_DIR "${CMAKE_BINARY_DIR}/data")
+option(RELATIVE_PATH_DIR "Use relative BUILD_DATA_DIR" ON)
+
+if(NOT RELATIVE_PATH_DIR)
+  set(BUILD_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data")
+  set(BUILD_CONFIG_DATA_DIR "${CMAKE_BINARY_DIR}/data")
+else()
+  set(BUILD_DATA_DIR "../data")
+  set(BUILD_CONFIG_DATA_DIR "data")
+endif()
 ## Check endianess
 
 if(NOT EMSCRIPTEN)
@@ -927,7 +934,6 @@ endif(GENERATE_WRAPPER)
 
 ## SM64
 add_subdirectory(external/libsm64)
-include_directories(external/libsm64/src)
 
 ## Generate supertux executable in the right place
 
@@ -946,7 +952,7 @@ target_link_libraries(supertux2_lib PUBLIC glm::glm)
 target_compile_definitions(supertux2_lib PUBLIC -DGLM_ENABLE_EXPERIMENTAL)
 
 if(WIN32)
-  add_executable(supertux2 src/main.cpp ${CMAKE_CURRENT_SOURCE_DIR}/data/images/engine/icons/supertux.rc)
+  add_executable(supertux2 WIN32 src/main.cpp ${CMAKE_CURRENT_SOURCE_DIR}/data/images/engine/icons/supertux.rc)
   target_link_libraries(supertux2 ${SDL2MAIN_LIBRARIES})
 else()
   add_executable(supertux2 src/main.cpp)

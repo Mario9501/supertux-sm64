@@ -15,9 +15,16 @@
 //  along with this program; if not, write to the Free Software
 //  Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 
-#include <boost/format.hpp>
-
 #include "object/player.hpp"
+
+#include <boost/format.hpp>
+extern "C" {
+#include <libsm64.h>
+#include <decomp/include/sm64shared.h>
+#include <decomp/include/audio_defines.h>
+#include <decomp/include/seq_ids.h>
+}
+#define SEQUENCE_ARGS(priority, seqId) ((priority << 8) | seqId)
 
 #include "audio/sound_manager.hpp"
 #include "badguy/badguy.hpp"
@@ -37,6 +44,7 @@
 #include "object/sprite_particle.hpp"
 #include "sprite/sprite.hpp"
 #include "sprite/sprite_manager.hpp"
+#include "supertux/console.hpp"
 #include "supertux/game_session.hpp"
 #include "supertux/gameconfig.hpp"
 #include "supertux/sector.hpp"
@@ -238,7 +246,17 @@ Player::Player(PlayerStatus& player_status, const std::string& name_) :
   if (m_mario)
   {
     if (m_mario_obj) delete m_mario_obj;
-    m_mario_obj = new MarioInstance;
+    m_mario_obj = new MarioInstance(this);
+
+    if (m_player_status.bonus == NO_BONUS)
+    {
+      // tux MUST be big
+      m_player_status.bonus = GROWUP_BONUS;
+      Rectf bbox2 = m_col.m_bbox;
+      bbox2.move(Vector(0, m_col.m_bbox.get_height() - BIG_TUX_HEIGHT));
+      bbox2.set_height(BIG_TUX_HEIGHT);
+      m_col.set_size(bbox2.get_width(), bbox2.get_height());
+    }
   }
 }
 
@@ -247,6 +265,7 @@ Player::~Player()
   ungrab_object();
   if (m_climbing) stop_climbing(*m_climbing);
   if (m_mario_obj) delete m_mario_obj;
+  m_mario_obj = nullptr;
 }
 
 float
@@ -298,7 +317,7 @@ Player::do_scripting_controller(const std::string& control_text, bool pressed)
 }
 
 bool
-Player::adjust_height(float new_height, float bottom_offset)
+Player::adjust_height(float new_height, float bottom_offset, bool mario)
 {
   Rectf bbox2 = m_col.m_bbox;
   bbox2.move(Vector(0, m_col.m_bbox.get_height() - new_height - bottom_offset));
@@ -314,7 +333,7 @@ Player::adjust_height(float new_height, float bottom_offset)
 
   // adjust bbox accordingly
   // note that we use members of moving_object for this, so we can run this during CD, too
-  set_pos(bbox2.p1());
+  if (!mario) set_pos(bbox2.p1());
   m_col.set_size(bbox2.get_width(), bbox2.get_height());
   return true;
 }
@@ -372,7 +391,7 @@ Player::update(float dt_sec)
   }
   no_water = true;
 
-  if ((m_swimming || m_water_jump) && is_big())
+  if ((m_swimming || m_water_jump) && is_big() && !m_mario)
   {
     m_col.set_size(TUX_WIDTH, TUX_WIDTH);
     adjust_height(TUX_WIDTH);
@@ -408,7 +427,7 @@ Player::update(float dt_sec)
         adjust_height(TUX_WIDTH);
       m_wants_buttjump = m_does_buttjump = m_backflipping = false;
       m_dir = (m_physic.get_velocity_x() > 0) ? Direction::LEFT : Direction::RIGHT;
-      SoundManager::current()->play("sounds/splash.wav");
+      if (!m_mario) SoundManager::current()->play("sounds/splash.wav");
     }
   }
 #endif
@@ -530,7 +549,10 @@ Player::update(float dt_sec)
 
   if (m_second_growup_sound_timer.check())
   {
-    SoundManager::current()->play("sounds/grow.wav");
+    if (is_mario())
+      sm64_play_sound_global(SOUND_MARIO_HAHA);
+    else
+      SoundManager::current()->play("sounds/grow.wav");
     m_second_growup_sound_timer.stop();
   }
 
@@ -553,7 +575,7 @@ Player::update(float dt_sec)
   }
 
   // calculate movement for this frame
-  if (!m_mario) m_col.set_movement(m_physic.get_movement(dt_sec) + Vector(m_boost * dt_sec, 0));
+  m_col.set_movement(m_physic.get_movement(dt_sec) + Vector(m_boost * dt_sec, 0));
 
   if (m_grabbed_object != nullptr && !m_dying)
   {
@@ -610,9 +632,47 @@ Player::update(float dt_sec)
   }
 
   if (m_mario) {
+    bool oldDuck = m_duck;
     m_mario_obj->update(dt_sec);
-    set_pos(m_mario_obj->get_pos() - Vector(m_col.m_bbox.get_width() / 2.f, m_col.m_bbox.get_height()+1), true);
-	m_physic.set_velocity(Vector(0));
+    m_duck = (m_mario_obj->state.action & ACT_FLAG_SHORT_HITBOX);
+    if (m_duck && !oldDuck)
+      adjust_height(DUCKED_TUX_HEIGHT, 0, true);
+    else if (!m_duck && oldDuck)
+      adjust_height(BIG_TUX_HEIGHT, 0, true);
+
+    m_dir = (m_mario_obj->state.faceAngle > 0 && m_mario_obj->state.faceAngle < math::PI) ? Direction::RIGHT : Direction::LEFT;
+
+    if (!m_deactivated)
+    {
+      set_pos(m_mario_obj->get_pos() - Vector(m_col.m_bbox.get_width() / 2.f, m_col.m_bbox.get_height() + ((m_mario_obj->state.action & ACT_FLAG_AIR && m_mario_obj->state.velocity[1] >= -4.f) ? 8 : -8)), true);
+      m_physic.set_velocity(Vector(m_mario_obj->state.velocity[0], -m_mario_obj->state.velocity[1]));
+    }
+    else
+    {
+      // handle mario in cutscenes
+      m_mario_obj->input.buttonA = m_mario_obj->input.buttonB = m_mario_obj->input.buttonZ = false;
+      int divider = (m_physic.get_velocity_x() > 150) ? 380 : 340;
+      bool faster = fabsf(m_physic.get_velocity_x() / divider) > fabsf(m_mario_obj->input.stickX);
+      float dist = m_mario_obj->get_pos().x - get_pos().x;
+
+      m_mario_obj->input.stickX = (faster) ? -m_physic.get_velocity_x() / divider : m_mario_obj->input.stickX;
+	  sm64_set_mario_velocity(m_mario_obj->ID(), 0, m_mario_obj->state.velocity[1], m_mario_obj->state.velocity[2]);
+      int sign[] = {(m_mario_obj->input.stickX > 0) ? 1 : -1, (dist > 0) ? 1 : -1};
+
+      if (abs(dist) > 96)
+      {
+        if (m_physic.get_velocity_x())
+          sm64_set_mario_forward_velocity(m_mario_obj->ID(), -m_mario_obj->input.stickX * divider / 15);
+        else if (m_mario_obj->input.stickX)
+          m_mario_obj->input.stickX *= (sign[0] != sign[1]) ? -1 : 1;
+        else
+          m_mario_obj->input.stickX = (dist > 0) ? 0.5f : -0.5f;
+      }
+      else if (abs(dist) > 32)
+        m_mario_obj->input.stickX *= (sign[0] != sign[1]) ? -1 : 1;
+      else
+        m_mario_obj->input.stickX = 0;
+    }
 
     if (m_mario_obj->dead() && !m_dying_timer.started())
     {
@@ -658,6 +718,8 @@ Player::handle_input_swimming()
 void
 Player::swim(float pointx, float pointy, bool boost)
 {
+    if (m_mario) return;
+
     if (m_swimming)
       m_physic.set_gravity_modifier(.0f);
 
@@ -948,6 +1010,8 @@ Player::do_duck() {
   if (m_does_buttjump)
     return;
 
+  if (m_mario && m_deactivated) m_mario_obj->input.buttonZ = true;
+
   if (adjust_height(DUCKED_TUX_HEIGHT)) {
     m_duck = true;
     m_growing = false;
@@ -967,6 +1031,8 @@ Player::do_standup(bool force_standup) {
     return;
   if (m_stone)
     return;
+
+  if (m_mario && m_deactivated) m_mario_obj->input.buttonZ = false;
 
   if (m_swimming ? adjust_height(TUX_WIDTH) : adjust_height(BIG_TUX_HEIGHT)) {
     m_duck = false;
@@ -993,7 +1059,7 @@ Player::do_backflip() {
   m_backflip_direction = (m_dir == Direction::LEFT)?(+1):(-1);
   m_backflipping = true;
   do_jump((m_player_status.bonus == AIR_BONUS) ? -720.0f : -580.0f);
-  SoundManager::current()->play("sounds/flip.wav");
+  if (!m_mario) SoundManager::current()->play("sounds/flip.wav");
   m_backflip_timer.start(TUX_BACKFLIP_TIME);
 }
 
@@ -1011,6 +1077,11 @@ Player::do_jump(float yspeed) {
     m_can_jump = false;
 
     // play sound
+    if (m_mario) {
+      if (m_deactivated) m_mario_obj->input.buttonA = true;
+      return;
+    }
+
     if (is_big()) {
       SoundManager::current()->play("sounds/bigjump.wav");
     } else {
@@ -1136,36 +1207,41 @@ Player::handle_input()
 
   if (m_mario)
   {
-    m_mario_obj->input.stickX = m_controller->hold(Control::LEFT) ? 1 : m_controller->hold(Control::RIGHT) ? -1 : 0;
+    if ((m_mario_obj->state.action & ACT_GROUP_MASK) == ACT_GROUP_SUBMERGED || m_mario_obj->state.action == ACT_CLIMBING_LADDER) // in the water, or climbing a ladder
+      m_mario_obj->input.stickY = float(m_controller->hold(Control::DOWN)) - float(m_controller->hold(Control::UP));
+    else
+      m_mario_obj->input.stickY = 0;
+    m_mario_obj->input.stickX = float(m_controller->hold(Control::LEFT)) - float(m_controller->hold(Control::RIGHT));
     m_mario_obj->input.buttonA = m_controller->hold(Control::JUMP);
     m_mario_obj->input.buttonB = m_controller->hold(Control::ACTION);
-    m_mario_obj->input.buttonZ = m_controller->hold(Control::DOWN);
-    return;
+    m_mario_obj->input.buttonZ = m_controller->hold(Control::DOWN) && !m_mario_obj->input.stickY;
   }
 
-  if (m_climbing) {
-    handle_input_climbing();
-    return;
-  }
-  if (m_swimming) {
-    handle_input_swimming();
-  }
-  else
-  {
-    if (m_water_jump)
+  if (!m_mario) {
+    if (m_climbing) {
+      handle_input_climbing();
+      return;
+    }
+    if (m_swimming) {
+      handle_input_swimming();
+    }
+    else
     {
-      swim(0,0,0);
+      if (m_water_jump)
+      {
+        swim(0,0,0);
+      }
     }
-  }
 
-  if (!m_swimming)
-  {
-    if (!m_water_jump && !m_backflipping) m_sprite->set_angle(0);
-    if (!m_jump_early_apex) {
-      m_physic.set_gravity_modifier(1.0f);
-    }
-    else {
-      m_physic.set_gravity_modifier(JUMP_EARLY_APEX_FACTOR);
+    if (!m_swimming)
+    {
+      if (!m_water_jump && !m_backflipping) m_sprite->set_angle(0);
+      if (!m_jump_early_apex) {
+        m_physic.set_gravity_modifier(1.0f);
+      }
+      else {
+        m_physic.set_gravity_modifier(JUMP_EARLY_APEX_FACTOR);
+      }
     }
   }
 
@@ -1190,15 +1266,17 @@ Player::handle_input()
     }
   }
 
-  /* Handle horizontal movement: */
-  if (!m_backflipping && !m_stone && !m_swimming) handle_horizontal_input();
+  if (!m_mario) {
+    /* Handle horizontal movement: */
+    if (!m_backflipping && !m_stone && !m_swimming) handle_horizontal_input();
 
-  /* Jump/jumping? */
-  if (on_ground())
-    m_can_jump = true;
+    /* Jump/jumping? */
+    if (on_ground())
+      m_can_jump = true;
 
-  /* Handle vertical movement: */
-  if (!m_stone && !m_swimming) handle_vertical_input();
+    /* Handle vertical movement: */
+    if (!m_stone && !m_swimming) handle_vertical_input();
+  }
 
   /* Shoot! */
   auto active_bullets = Sector::get().get_object_count<Bullet>();
@@ -1226,110 +1304,114 @@ Player::handle_input()
   }
 
   /* Turn to Stone */
-  if (m_controller->pressed(Control::DOWN) && m_player_status.bonus == EARTH_BONUS && !m_cooldown_timer.started() && on_ground() && !m_swimming) {
-    if (m_controller->hold(Control::ACTION) && !m_ability_timer.started()) {
-      m_ability_timer.start(static_cast<float>(m_player_status.max_earth_time) * STONE_TIME_PER_FLOWER);
-      m_powersprite->stop_animation();
-      m_stone = true;
-      m_physic.set_gravity_modifier(1.0f); // Undo jump_early_apex
+  if (!m_mario) {
+    if (m_controller->pressed(Control::DOWN) && m_player_status.bonus == EARTH_BONUS && !m_cooldown_timer.started() && on_ground() && !m_swimming) {
+      if (m_controller->hold(Control::ACTION) && !m_ability_timer.started()) {
+        m_ability_timer.start(static_cast<float>(m_player_status.max_earth_time) * STONE_TIME_PER_FLOWER);
+        m_powersprite->stop_animation();
+        m_stone = true;
+        m_physic.set_gravity_modifier(1.0f); // Undo jump_early_apex
+      }
     }
-  }
 
-  if (m_stone)
-    apply_friction();
+    if (m_stone)
+      apply_friction();
 
-  /* Revert from Stone */
-  if (m_stone && (!m_controller->hold(Control::ACTION) || m_ability_timer.get_timeleft() <= 0.5f)) {
-    m_cooldown_timer.start(m_ability_timer.get_timegone()/2.0f); //The longer stone form is used, the longer until it can be used again
-    m_ability_timer.stop();
-    m_sprite->set_angle(0.0f);
-    m_powersprite->set_angle(0.0f);
-    m_lightsprite->set_angle(0.0f);
-    m_stone = false;
-    for (int i = 0; i < 8; i++)
-    {
-      Vector ppos = Vector(m_col.m_bbox.get_left() + 8.0f + 16.0f * static_cast<float>(static_cast<int>(i / 4)),
-                           m_col.m_bbox.get_top() + 16.0f * static_cast<float>(i % 4));
-      float grey = graphicsRandom.randf(.4f, .8f);
-      Color pcolor = Color(grey, grey, grey);
-      Sector::get().add<Particles>(ppos, -60, 240, 42.0f, 81.0f, Vector(0.0f, 500.0f),
-                                                                8, pcolor, 4 + graphicsRandom.randf(-0.4f, 0.4f),
-                                                                0.8f + graphicsRandom.randf(0.0f, 0.4f), LAYER_OBJECTS + 2);
+    /* Revert from Stone */
+    if (m_stone && (!m_controller->hold(Control::ACTION) || m_ability_timer.get_timeleft() <= 0.5f)) {
+      m_cooldown_timer.start(m_ability_timer.get_timegone()/2.0f); //The longer stone form is used, the longer until it can be used again
+      m_ability_timer.stop();
+      m_sprite->set_angle(0.0f);
+      m_powersprite->set_angle(0.0f);
+      m_lightsprite->set_angle(0.0f);
+      m_stone = false;
+      for (int i = 0; i < 8; i++)
+      {
+        Vector ppos = Vector(m_col.m_bbox.get_left() + 8.0f + 16.0f * static_cast<float>(static_cast<int>(i / 4)),
+                             m_col.m_bbox.get_top() + 16.0f * static_cast<float>(i % 4));
+        float grey = graphicsRandom.randf(.4f, .8f);
+        Color pcolor = Color(grey, grey, grey);
+        Sector::get().add<Particles>(ppos, -60, 240, 42.0f, 81.0f, Vector(0.0f, 500.0f),
+                                                                  8, pcolor, 4 + graphicsRandom.randf(-0.4f, 0.4f),
+                                                                  0.8f + graphicsRandom.randf(0.0f, 0.4f), LAYER_OBJECTS + 2);
+      }
     }
-  }
 
-  /* Duck or Standup! */
-  if (m_controller->hold(Control::DOWN) && !m_stone && !m_swimming) {
-    do_duck();
-  } else {
-    do_standup(false);
+    /* Duck or Standup! */
+    if (m_controller->hold(Control::DOWN) && !m_stone && !m_swimming) {
+      do_duck();
+    } else {
+      do_standup(false);
+    }
   }
 
   /* grabbing */
   try_grab();
 
-  if (!m_controller->hold(Control::ACTION) && m_grabbed_object) {
-    auto moving_object = dynamic_cast<MovingObject*> (m_grabbed_object);
-    if (moving_object) {
-      // move the grabbed object a bit away from tux
-      Rectf grabbed_bbox = moving_object->get_bbox();
-      Rectf dest_;
-      if (m_swimming || m_water_jump)
-      {
-        dest_.set_bottom(m_col.m_bbox.get_bottom() + (std::sin(m_swimming_angle) * 32.f));
-        dest_.set_top(dest_.get_bottom() - grabbed_bbox.get_height());
-        dest_.set_left(m_col.m_bbox.get_left() + (std::cos(m_swimming_angle) * 32.f));
-        dest_.set_right(dest_.get_left() + grabbed_bbox.get_width());
-      }
-      else
-      {
-        dest_.set_bottom(m_col.m_bbox.get_top() + m_col.m_bbox.get_height() * 0.66666f);
-        dest_.set_top(dest_.get_bottom() - grabbed_bbox.get_height());
-
-        if (m_dir == Direction::LEFT)
+  if (!m_mario) {
+    if (!m_controller->hold(Control::ACTION) && m_grabbed_object) {
+      auto moving_object = dynamic_cast<MovingObject*> (m_grabbed_object);
+      if (moving_object) {
+        // move the grabbed object a bit away from tux
+        Rectf grabbed_bbox = moving_object->get_bbox();
+        Rectf dest_;
+        if (m_swimming || m_water_jump)
         {
-          dest_.set_right(m_col.m_bbox.get_left() - 1);
-          dest_.set_left(dest_.get_right() - grabbed_bbox.get_width());
-        }
-        else
-        {
-          dest_.set_left(m_col.m_bbox.get_right() + 1);
+          dest_.set_bottom(m_col.m_bbox.get_bottom() + (std::sin(m_swimming_angle) * 32.f));
+          dest_.set_top(dest_.get_bottom() - grabbed_bbox.get_height());
+          dest_.set_left(m_col.m_bbox.get_left() + (std::cos(m_swimming_angle) * 32.f));
           dest_.set_right(dest_.get_left() + grabbed_bbox.get_width());
         }
-      }
-
-      if (Sector::get().is_free_of_tiles(dest_, true) &&
-         Sector::get().is_free_of_statics(dest_, moving_object, true))
-      {
-        moving_object->set_pos(dest_.p1());
-        if (m_controller->hold(Control::UP))
-        {
-          m_grabbed_object->ungrab(*this, Direction::UP);
-        }
-        else if (m_controller->hold(Control::DOWN))
-        {
-          m_grabbed_object->ungrab(*this, Direction::DOWN);
-        }
-        else if (m_swimming || m_water_jump)
-        {
-          m_grabbed_object->ungrab(*this,
-            std::abs(m_swimming_angle) <= math::PI_2 ? Direction::RIGHT : Direction::LEFT);
-        }
         else
         {
-          m_grabbed_object->ungrab(*this, m_dir);
-        }
-        moving_object->del_remove_listener(m_grabbed_object_remove_listener.get());
-        m_grabbed_object = nullptr;
-      }
-    } else {
-      log_debug << "Non MovingObject grabbed?!?" << std::endl;
-    }
-  }
+          dest_.set_bottom(m_col.m_bbox.get_top() + m_col.m_bbox.get_height() * 0.66666f);
+          dest_.set_top(dest_.get_bottom() - grabbed_bbox.get_height());
 
-  /* stop backflipping at will */
-  if ( m_backflipping && ( !m_controller->hold(Control::JUMP) && !m_backflip_timer.started()) ){
-    stop_backflipping();
+          if (m_dir == Direction::LEFT)
+          {
+            dest_.set_right(m_col.m_bbox.get_left() - 1);
+            dest_.set_left(dest_.get_right() - grabbed_bbox.get_width());
+          }
+          else
+          {
+            dest_.set_left(m_col.m_bbox.get_right() + 1);
+            dest_.set_right(dest_.get_left() + grabbed_bbox.get_width());
+          }
+        }
+
+        if (Sector::get().is_free_of_tiles(dest_, true) &&
+           Sector::get().is_free_of_statics(dest_, moving_object, true))
+        {
+          moving_object->set_pos(dest_.p1());
+          if (m_controller->hold(Control::UP))
+          {
+            m_grabbed_object->ungrab(*this, Direction::UP);
+          }
+          else if (m_controller->hold(Control::DOWN))
+          {
+            m_grabbed_object->ungrab(*this, Direction::DOWN);
+          }
+          else if (m_swimming || m_water_jump)
+          {
+            m_grabbed_object->ungrab(*this,
+              std::abs(m_swimming_angle) <= math::PI_2 ? Direction::RIGHT : Direction::LEFT);
+          }
+          else
+          {
+            m_grabbed_object->ungrab(*this, m_dir);
+          }
+          moving_object->del_remove_listener(m_grabbed_object_remove_listener.get());
+          m_grabbed_object = nullptr;
+        }
+      } else {
+        log_debug << "Non MovingObject grabbed?!?" << std::endl;
+      }
+    }
+
+    /* stop backflipping at will */
+    if ( m_backflipping && ( !m_controller->hold(Control::JUMP) && !m_backflip_timer.started()) ){
+      stop_backflipping();
+    }
   }
 }
 
@@ -1361,6 +1443,50 @@ Player::position_grabbed_object()
 void
 Player::try_grab()
 {
+  if (is_mario())
+  {
+    if (m_grabbed_object && !m_mario_obj->state.holdingObject)
+      ungrab_object();
+    else if (!m_grabbed_object && !m_swimming)
+    {
+      Vector pos(0);
+      if (m_dir == Direction::LEFT)
+        pos = Vector(m_col.m_bbox.get_left() - 5, m_col.m_bbox.get_bottom() - 16);
+      else
+        pos = Vector(m_col.m_bbox.get_right() + 5, m_col.m_bbox.get_bottom() - 16);
+
+      if (m_mario_obj->state.action != ACT_PUNCHING && m_mario_obj->state.action != ACT_MOVE_PUNCHING && m_mario_obj->state.action != ACT_PICKING_UP)
+        return;
+
+      for (auto& moving_object : Sector::get().get_objects_by_type<MovingObject>())
+      {
+        Portable* portable = dynamic_cast<Portable*>(&moving_object);
+        if (!portable || !portable->is_portable()) continue;
+
+        // make sure the Portable isn't currently non-solid
+        if (moving_object.get_group() == COLGROUP_DISABLED) continue;
+
+        // check if we are within reach
+        if (moving_object.get_bbox().contains(pos))
+        {
+          if (m_mario_obj->state.action != ACT_PICKING_UP)
+            sm64_set_mario_action(m_mario_obj->ID(), ACT_PICKING_UP);
+
+          if (m_mario_obj->state.holdingObject)
+          {
+            m_grabbed_object = portable;
+
+            moving_object.add_remove_listener(m_grabbed_object_remove_listener.get());
+
+            position_grabbed_object();
+            break;
+          }
+        }
+      }
+    }
+    return;
+  }
+
   if (m_controller->hold(Control::ACTION) && !m_grabbed_object && !m_duck)
   {
 
@@ -1946,9 +2072,19 @@ Player::on_flip(float height)
 void
 Player::make_invincible()
 {
-  SoundManager::current()->play("sounds/invincible_start.ogg");
+  if (!is_mario())
+  {
+    SoundManager::current()->play("sounds/invincible_start.ogg");
+    Sector::get().get_singleton_by_type<MusicObject>().play_music(HERRING_MUSIC);
+  }
+  else
+  {
+    Sector::get().get_singleton_by_type<MusicObject>().play_music((MusicType)-1); // silence music
+    sm64_play_sound_global(SOUND_MENU_STAR_SOUND);
+	sm64_play_sound_global(SOUND_MARIO_HERE_WE_GO);
+    sm64_play_music(0, SEQUENCE_ARGS(4, SEQ_EVENT_POWERUP), 0);
+  }
   m_invincible_timer.start(TUX_INVINCIBLE_TIME);
-  Sector::get().get_singleton_by_type<MusicObject>().play_music(HERRING_MUSIC);
 }
 
 void
@@ -1956,7 +2092,16 @@ Player::kill(bool completely, uint32_t marioDamage, Vector src)
 {
   if (m_mario)
   {
-    m_mario_obj->hurt(marioDamage, src);
+    if (!completely)
+    {
+      if (m_safe_timer.started() || m_invincible_timer.started() || m_stone)
+        return;
+      m_safe_timer.start(1.f);
+      m_mario_obj->hurt(marioDamage, src);
+    } else {
+      set_bonus(GROWUP_BONUS, true);
+      m_mario_obj->kill(get_pos().y > Sector::get().get_height());
+    }
     return;
   }
 
@@ -2055,16 +2200,8 @@ Player::set_pos(const Vector& pos, bool tuxToMario)
 {
   m_col.set_pos(pos);
 
-  if (m_mario && !tuxToMario)
-  {
-    if (!m_mario_obj->spawned())
-    {
-      m_mario_obj->spawn(get_pos().x, get_pos().y);
-      add_bonus(GROWUP_BONUS, false);
-    }
-    else
-      m_mario_obj->set_pos(pos);
-  }
+  if (m_mario && m_mario_obj->spawned() && !tuxToMario && !m_deactivated)
+    m_mario_obj->set_pos(Vector(get_pos().x + m_col.m_bbox.get_width()/2 - 2, get_pos().y+40));
 }
 
 void
@@ -2171,6 +2308,7 @@ void Player::walk(float speed)
 void Player::set_dir(bool right)
 {
   m_dir = right ? Direction::RIGHT : Direction::LEFT;
+  if (m_mario && m_deactivated) m_mario_obj->input.stickX = (right) ? -0.1f : 0.1f;
 }
 
 void
@@ -2217,6 +2355,9 @@ Player::start_climbing(Climbable& climbable)
     stop_backflipping();
     do_standup(true);
   }
+
+  if (m_mario)
+    sm64_set_mario_action(m_mario_obj->ID(), ACT_CLIMBING_LADDER);
 }
 
 void
@@ -2231,6 +2372,9 @@ Player::stop_climbing(Climbable& /*climbable*/)
   m_physic.enable_gravity(true);
   m_physic.set_velocity(0, 0);
   m_physic.set_acceleration(0, 0);
+
+  if (m_mario && m_mario_obj->state.action == ACT_CLIMBING_LADDER)
+    sm64_set_mario_action(m_mario_obj->ID(), ACT_SOFT_BONK);
 
   if (m_controller->hold(Control::JUMP)) {
     m_on_ground_flag = true;

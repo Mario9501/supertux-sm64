@@ -567,7 +567,7 @@ s32 act_reading_sign(struct MarioState *m) {
 s32 act_debug_free_move(struct MarioState *m) {
     struct Controller *gPlayer1Controller = &gController;
 
-    struct Surface *surf;
+    struct SM64SurfaceCollisionData *surf;
     f32 floorHeight;
     Vec3f pos;
     f32 speed;
@@ -622,8 +622,8 @@ s32 act_debug_free_move(struct MarioState *m) {
 
 void general_star_dance_handler(struct MarioState *m, s32 isInWater) {
 //  s32 dialogID;
-//  if (m->actionState == 0) {
-//      switch (++m->actionTimer) {
+    if (m->actionState == 0) {
+        switch (++m->actionTimer) {
 //          case 1:
 //              spawn_object(m->marioObj, MODEL_STAR, bhvCelebrationStar);
 //              disable_background_sound();
@@ -638,9 +638,9 @@ void general_star_dance_handler(struct MarioState *m, s32 isInWater) {
 //              }
 //              break;
 
-//          case 42:
-//              play_sound(SOUND_MARIO_HERE_WE_GO, m->marioObj->header.gfx.cameraToObject);
-//              break;
+            case 42:
+                play_sound(SOUND_MARIO_HERE_WE_GO, m->marioObj->header.gfx.cameraToObject);
+                break;
 
 //          case 80:
 //              if ((m->actionArg & 1) == 0) {
@@ -651,8 +651,8 @@ void general_star_dance_handler(struct MarioState *m, s32 isInWater) {
 //                  m->actionState = 1;
 //              }
 //              break;
-//      }
-//  } else if (m->actionState == 1 && gDialogResponse) {
+        }
+    } /*else if (m->actionState == 1 && gDialogResponse) {*/
 //      if (gDialogResponse == 1) {
 //          save_file_do_save(gCurrSaveFileNum - 1);
 //      }
@@ -2014,7 +2014,7 @@ void generate_yellow_sparkles(s16 x, s16 y, s16 z, f32 radius) {
 // not sure what this does, returns the height of the floor.
 // (animation related?)
 // static f32 end_obj_set_visual_pos(struct Object *o) {
-//     struct Surface *surf;
+//     struct SM64SurfaceCollisionData *surf;
 //     Vec3s sp24;
 //     f32 sp20;
 //     f32 sp1C;
@@ -2178,7 +2178,7 @@ static void end_peach_cutscene_descend_peach(struct MarioState *m) {
 
 // Mario runs to peach
 static void end_peach_cutscene_run_to_peach(struct MarioState *m) {
-    struct Surface *surf;
+    struct SM64SurfaceCollisionData *surf;
 
     if (m->actionTimer == 22) {
         sEndPeachAnimation = 5;

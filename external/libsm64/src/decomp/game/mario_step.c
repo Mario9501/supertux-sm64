@@ -3,14 +3,14 @@
 #include "../engine/math_util.h"
 #include "../engine/surface_collision.h"
 #include "mario.h"
-#include "../audio/external.h"
+//#include "audio/external.h"
 //#include "game_init.h"
 #include "interaction.h"
 #include "mario_step.h"
 
 static s16 sMovingSandSpeeds[] = { 12, 8, 4, 0 };
 
-struct Surface gWaterSurfacePseudoFloor = {
+struct SM64SurfaceCollisionData gWaterSurfacePseudoFloor = {
     SURFACE_VERY_SLIPPERY, 0,    0,    0, 0, 0, { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 },
     { 0.0f, 1.0f, 0.0f },  0.0f, 0, NULL, 0
 };
@@ -169,7 +169,7 @@ u32 mario_push_off_steep_floor(struct MarioState *m, u32 action, u32 actionArg) 
 }
 
 u32 mario_update_moving_sand(struct MarioState *m) {
-    struct Surface *floor = m->floor;
+    struct SM64SurfaceCollisionData *floor = m->floor;
     s32 floorType = floor->type;
 
     if (floorType == SURFACE_DEEP_MOVING_QUICKSAND || floorType == SURFACE_SHALLOW_MOVING_QUICKSAND
@@ -187,7 +187,7 @@ u32 mario_update_moving_sand(struct MarioState *m) {
 }
 
 u32 mario_update_windy_ground(struct MarioState *m) {
-    struct Surface *floor = m->floor;
+    struct SM64SurfaceCollisionData *floor = m->floor;
 
     if (floor->type == SURFACE_HORIZONTAL_WIND) {
         f32 pushSpeed;
@@ -255,21 +255,22 @@ s32 stationary_ground_step(struct MarioState *m) {
 }
 
 static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
-    UNUSED struct Surface *lowerWall;
-    struct Surface *upperWall;
-    struct Surface *ceil;
-    struct Surface *floor;
+    UNUSED struct SM64SurfaceCollisionData *lowerWall;
+    struct SM64SurfaceCollisionData *upperWall;
+    struct SM64SurfaceCollisionData *ceil;
+    struct SM64SurfaceCollisionData *floor;
     f32 ceilHeight;
     f32 floorHeight;
     f32 waterLevel;
 
     //lowerWall = resolve_and_return_wall_collisions(nextPos, 30.0f, 24.0f);
-    upperWall = resolve_and_return_wall_collisions(nextPos, 65.0f, 30.0f); // old: 60.0f
+    upperWall = resolve_and_return_wall_collisions(nextPos, 65.0f, 30.0f); // old: 60.0f, 50.0f
 
     floorHeight = find_floor(nextPos[0], nextPos[1], nextPos[2], &floor);
     ceilHeight = vec3f_find_ceil(nextPos, floorHeight, &ceil);
 
     //waterLevel = find_water_level(nextPos[0], nextPos[2]);
+    waterLevel = m->waterLevel;
 
     m->wall = upperWall;
 
@@ -284,7 +285,7 @@ static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
     }
 
     if (nextPos[1] > floorHeight + 100.0f) {
-        if (nextPos[1] + 160.0f >= ceilHeight) {
+        if (nextPos[1] + 120.0f >= ceilHeight) {
             return GROUND_STEP_HIT_WALL_STOP_QSTEPS;
         }
 
@@ -294,7 +295,7 @@ static s32 perform_ground_quarter_step(struct MarioState *m, Vec3f nextPos) {
         return GROUND_STEP_LEFT_GROUND;
     }
 
-    if (!(m->action & ACT_FLAG_SHORT_HITBOX) && floorHeight + 160.0f >= ceilHeight) {
+    if (!(m->action & ACT_FLAG_SHORT_HITBOX) && floorHeight + 120.0f >= ceilHeight) {
         return GROUND_STEP_HIT_WALL_STOP_QSTEPS;
     }
 
@@ -344,8 +345,8 @@ s32 perform_ground_step(struct MarioState *m) {
     return stepResult;
 }
 
-u32 check_ledge_grab(struct MarioState *m, struct Surface *wall, Vec3f intendedPos, Vec3f nextPos) {
-    struct Surface *ledgeFloor;
+u32 check_ledge_grab(struct MarioState *m, struct SM64SurfaceCollisionData *wall, Vec3f intendedPos, Vec3f nextPos) {
+    struct SM64SurfaceCollisionData *ledgeFloor;
     Vec3f ledgePos;
     f32 displacementX;
     f32 displacementZ;
@@ -365,11 +366,11 @@ u32 check_ledge_grab(struct MarioState *m, struct Surface *wall, Vec3f intendedP
 
     //! Since the search for floors starts at y + 160, we will sometimes grab
     // a higher ledge than expected (glitchy ledge grab)
-    ledgePos[0] = nextPos[0] - wall->normal.x * 60.0f;
-    ledgePos[2] = nextPos[2] - wall->normal.z * 60.0f;
-    ledgePos[1] = find_floor(ledgePos[0], nextPos[1] + 160.0f, ledgePos[2], &ledgeFloor);
+    ledgePos[0] = nextPos[0] - wall->normal.x * 30.0f;
+    ledgePos[2] = nextPos[2] - wall->normal.z * 30.0f;
+    ledgePos[1] = find_floor(ledgePos[0], nextPos[1] + 120.0f, ledgePos[2], &ledgeFloor);
 
-    if (ledgePos[1] - nextPos[1] <= 100.0f) {
+    if (ledgePos[1] - nextPos[1] <= 80.0f) { // originally 100.0f
         return FALSE;
     }
 
@@ -387,23 +388,24 @@ u32 check_ledge_grab(struct MarioState *m, struct Surface *wall, Vec3f intendedP
 s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepArg) {
     s16 wallDYaw;
     Vec3f nextPos;
-    struct Surface *upperWall;
-    struct Surface *lowerWall;
-    struct Surface *ceil;
-    struct Surface *floor;
+    struct SM64SurfaceCollisionData *upperWall;
+    struct SM64SurfaceCollisionData *lowerWall;
+    struct SM64SurfaceCollisionData *ceil;
+    struct SM64SurfaceCollisionData *floor;
     f32 ceilHeight;
     f32 floorHeight;
     f32 waterLevel;
 
     vec3f_copy(nextPos, intendedPos);
 
-    upperWall = resolve_and_return_wall_collisions(nextPos, 150.0f, 30.0f);
+    upperWall = resolve_and_return_wall_collisions(nextPos, 100.0f, 30.0f);
     lowerWall = resolve_and_return_wall_collisions(nextPos, 30.0f, 30.0f);
 
     floorHeight = find_floor(nextPos[0], nextPos[1], nextPos[2], &floor);
     ceilHeight = vec3f_find_ceil(nextPos, floorHeight, &ceil);
 
     //waterLevel = find_water_level(nextPos[0], nextPos[2]);
+    waterLevel = m->waterLevel;
 
     m->wall = NULL;
 
@@ -428,7 +430,7 @@ s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepAr
 
     //! This check uses f32, but findFloor uses short (overflow jumps)
     if (nextPos[1] <= floorHeight) {
-        if (ceilHeight - floorHeight > 160.0f) {
+        if (ceilHeight - floorHeight > 120.0f) {
             m->pos[0] = nextPos[0];
             m->pos[2] = nextPos[2];
             m->floor = floor;
@@ -442,7 +444,7 @@ s32 perform_air_quarter_step(struct MarioState *m, Vec3f intendedPos, u32 stepAr
         return AIR_STEP_LANDED;
     }
 
-    if (nextPos[1] + 160.0f > ceilHeight) {
+    if (nextPos[1] + 120.0f > ceilHeight) {
         if (m->vel[1] >= 0.0f) {
             m->vel[1] = 0.0f;
 

@@ -156,6 +156,7 @@ public:
   void bounce(BadGuy& badguy);
 
   bool is_dead() const { return m_dead; }
+  bool is_deactivated() const { return m_deactivated; }
   bool is_big() const;
   bool is_stone() const { return m_stone; }
   bool is_swimming() const { return m_swimming; }
@@ -190,7 +191,7 @@ public:
 
   /** Changes height of bounding box.
       Returns true if successful, false otherwise */
-  bool adjust_height(float new_height, float bottom_offset = 0);
+  bool adjust_height(float new_height, float bottom_offset = 0, bool mario = false);
 
   /** Orders the current GameSession to start a sequence
       @param sequence_name Name of the sequence to start
@@ -223,6 +224,12 @@ public:
   /** Boosts Tux in a certain direction, sideways. Useful for bumpers/walljumping. */
   void sideways_push(float delta);
 
+  /**
+   * Ungrabs the currently grabbed object, if any. Only call with its argument
+   * from an ObjectRemoveListener.
+   */
+  void ungrab_object(GameObject* gameobject = nullptr);
+
 private:
   void handle_input();
   void handle_input_ghost(); /**< input handling while in ghost mode */
@@ -246,12 +253,6 @@ private:
   void apply_friction();
 
   void check_bounds();
-
-  /**
-   * Ungrabs the currently grabbed object, if any. Only call with its argument
-   * from an ObjectRemoveListener.
-   */
-  void ungrab_object(GameObject* gameobject = nullptr);
 
 private:
   bool m_deactivated;

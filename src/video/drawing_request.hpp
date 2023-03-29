@@ -32,7 +32,7 @@ class Surface;
 
 enum RequestType
 {
-  TEXTURE, GRADIENT, FILLRECT, INVERSEELLIPSE, GETPIXEL, LINE, TRIANGLE, MARIO
+  TEXTURE, GRADIENT, FILLRECT, INVERSEELLIPSE, GETPIXEL, LINE, TRIANGLE, MARIO, SM64TEXTURE
 };
 
 struct DrawingRequest
@@ -175,26 +175,44 @@ struct MarioRequest : public DrawingRequest
   MarioRequest() :
     DrawingRequest(MARIO),
     geometry(nullptr),
-    mesh(nullptr),
     camera(0, 0),
     pos(0, 0),
     cap(0),
     texture(0),
-    shader(0),
     indices(nullptr) {}
 
   SM64MarioGeometryBuffers* geometry;
-  MarioMesh* mesh;
   Vector camera;
   Vector pos;
   uint32_t cap;
   uint32_t texture;
-  uint32_t shader;
   uint16_t* indices;
 
 private:
   MarioRequest(const MarioRequest&) = delete;
   MarioRequest& operator=(const MarioRequest&) = delete;	
+};
+
+struct SM64TextureRequest : public DrawingRequest
+{
+  SM64TextureRequest() :
+    DrawingRequest(SM64TEXTURE),
+    texture(0),
+    pos(0, 0),
+    texCoord1(0, 0),
+    texCoord2(0, 0),
+    color(0, 0, 0) {}
+
+  uint32_t texture;
+  Vector pos;
+  Vector size;
+  Vector texCoord1; // left and top
+  Vector texCoord2; // right and bottom
+  Color color;
+
+private:
+  SM64TextureRequest(const SM64TextureRequest&) = delete;
+  SM64TextureRequest& operator=(const SM64TextureRequest&) = delete;	
 };
 
 #endif

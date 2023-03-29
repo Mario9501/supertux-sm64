@@ -35,13 +35,13 @@ static void convert_uv_to_atlas( float *atlas_uv_out, short tc[] )
     float u = (float)((tc[0] * s_scaleS >> 16) - 8*s_uls) / 32.0f / s_texWidth;
     float v = (float)((tc[1] * s_scaleT >> 16) - 8*s_ult) / 32.0f / s_texHeight;
 
-    atlas_uv_out[0] = u * s_texWidth / 64.0f / (float)NUM_USED_TEXTURES + (float)s_textureIndex / (float)NUM_USED_TEXTURES;
+    atlas_uv_out[0] = u * s_texWidth / 64.0f / (float)mario_atlas_info->numUsedTextures + (float)s_textureIndex / (float)mario_atlas_info->numUsedTextures;
     atlas_uv_out[1] = v * s_texHeight / 64.0f;
 }
 
 static void process_display_list( void *dl )
 {
-    int64_t *ptr = (int64_t *)dl;
+    intptr_t *ptr = (intptr_t *)dl;
     Vtx *vdata = NULL;
 
     for( ;; )
@@ -50,19 +50,19 @@ static void process_display_list( void *dl )
         {
             case GFXCMD_VertexData: 
             {
-                UNUSED int64_t v = *ptr++;
-                UNUSED int64_t n = *ptr++;
-                UNUSED int64_t v0 = *ptr++;
+                UNUSED intptr_t v = *ptr++;
+                UNUSED intptr_t n = *ptr++;
+                UNUSED intptr_t v0 = *ptr++;
                 vdata = (Vtx*)v;
                 break;
             }
 
             case GFXCMD_Triangle:
             {
-                int64_t v00 = *ptr++;
-                int64_t v01 = *ptr++;
-                int64_t v02 = *ptr++;
-                UNUSED int64_t flag0 = *ptr++;
+                intptr_t v00 = *ptr++;
+                intptr_t v01 = *ptr++;
+                intptr_t v02 = *ptr++;
+                UNUSED intptr_t flag0 = *ptr++;
 
                 float x0 = vdata[v00].v.ob[0], y0 = vdata[v00].v.ob[1], z0 = vdata[v00].v.ob[2];
                 float x1 = vdata[v01].v.ob[0], y1 = vdata[v01].v.ob[1], z1 = vdata[v01].v.ob[2];
@@ -129,8 +129,8 @@ static void process_display_list( void *dl )
 
             case GFXCMD_Light:
             {
-                int64_t l = *ptr++;
-                int64_t n = *ptr++;
+                intptr_t l = *ptr++;
+                intptr_t n = *ptr++;
 
                 if( n == 1 )
                 {
@@ -145,9 +145,9 @@ static void process_display_list( void *dl )
 
             case GFXCMD_Texture:
             {
-                int64_t s = *ptr++;
-                int64_t t = *ptr++;
-                int64_t on = *ptr++;
+                intptr_t s = *ptr++;
+                intptr_t t = *ptr++;
+                intptr_t on = *ptr++;
 
                 s_scaleS = (uint16_t)s;
                 s_scaleT = (uint16_t)t;
@@ -158,19 +158,19 @@ static void process_display_list( void *dl )
 
             case GFXCMD_SetTextureImage:
             {
-                int64_t i = *ptr++;
+                intptr_t i = *ptr++;
 
                 s_textureIndex = (int)i;
-                s_texWidth = mario_tex_widths[s_textureIndex];
-                s_texHeight = mario_tex_heights[s_textureIndex];
+                s_texWidth = mario_atlas_info->texInfos[s_textureIndex].width;
+                s_texHeight = mario_atlas_info->texInfos[s_textureIndex].height;
 
                 break;
             }
 
             case GFXCMD_SetTileSize:
             {
-                int64_t uls = *ptr++;
-                int64_t ult = *ptr++;
+                intptr_t uls = *ptr++;
+                intptr_t ult = *ptr++;
                 ptr++; // lrs
                 ptr++; // lrt
 
@@ -182,7 +182,7 @@ static void process_display_list( void *dl )
 
             case GFXCMD_SubDisplayList:
             {
-                int64_t dl = *ptr++;
+                intptr_t dl = *ptr++;
                 process_display_list( (void*)dl );
                 break;
             }

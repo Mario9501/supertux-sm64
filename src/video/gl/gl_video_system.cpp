@@ -348,21 +348,15 @@ GLVideoSystem::make_screenshot()
 }
 
 void
-GLVideoSystem::init_mario(uint8_t* raw_texture, uint32_t* texture, uint32_t* shader, const char* shader_code)
+GLVideoSystem::init_sm64_texture(uint8_t* raw_texture, uint32_t* texture, int w, int h, bool linear)
 {
-  m_context->init_mario(raw_texture, texture, shader, shader_code);
+  m_context->init_sm64_texture(raw_texture, texture, w, h, linear);
 }
 
 void
-GLVideoSystem::init_mario_instance(SM64MarioGeometryBuffers* geometry, MarioMesh* mesh)
+GLVideoSystem::destroy_sm64_texture(uint32_t* texture)
 {
-  m_context->init_mario_instance(geometry, mesh);
-}
-
-void
-GLVideoSystem::destroy_mario_instance(MarioMesh* mesh)
-{
-  m_context->destroy_mario_instance(mesh);
+  m_context->destroy_sm64_texture(texture);
 }
 
 /* EOF */
